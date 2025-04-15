@@ -48,8 +48,7 @@ pico_enable_stdio_uart(cherryblossoms 0)
 pico_enable_stdio_usb(cherryblossoms 1)
 
 # Add the standard library to the build
-target_link_libraries(cherryblossoms
-        pico_stdlib)
+target_link_libraries(cherryblossoms pico_stdlib hardware_adc)
 
 # Add the standard include files to the build
 target_include_directories(cherryblossoms PRIVATE
