@@ -1,6 +1,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <math.h>
+#include <string.h>
 
 #include "pico/stdlib.h"
 #include "hardware/gpio.h"
@@ -65,33 +66,60 @@ sakura_pixel_value sakura[NUM_PIXELS];
 
 void init_sakura(){
     for (int i=0; i < NUM_PIXELS; ++i){
-        if (i == 27 || i == 28 || i == 35 || i == 36){
-            sakura[i].hue = 30;
+        if (i == 27 || i == 28 || i == 35 || i == 36) sakura[i].hue = 25;
+        else if ( i == 19 || i == 20 || i == 26 ||i == 29 || i== 34 || i == 37 || i == 43 || i == 44){
+            // the outer ring of the inner circle part (pardon my botany) does not change
+            continue;
         } else {
             sakura[i].hue = 343;
         }
-        sakura[i].saturation = ((double) rand() / (double) RAND_MAX) * 25.0 + 75.0;
-        sakura[i].direction = (rand() >> 30) & 1 ? 0.5: -0.5;
+        // setting the default saturation above the turning point creates a breathing effect 
+        // increasing the difference between the cutoff point and the default value lengthens the breathing duration
+        sakura[i].saturation = ((double) rand() / (double) RAND_MAX) * 10.0 + 89.0;  
+        sakura[i].direction = (rand() >> 30) & 1 ? 0.1: -0.1;
     }
 }
 
-void pattern_sakura(PIO pio, uint sm, uint len, float brightness){
-    for (uint i = 0; i < NUM_PIXELS; ++i){
-        if (sakura[i].saturation > 99) {
-            sakura[i].direction = -0.5;
-        } else if (sakura[i].saturation < 75) {
-            sakura[i].direction = 0.5;
+void pattern_sakura(PIO pio, uint sm, uint len, float brightness, uint frame){
+    for (uint i = 0; i < len; ++i){
+        // sometimes things look ugly but who cares honestly
+        if ((i == 19 || i == 20 || i == 26 ||i == 29 || i== 34 || i == 37 || i == 43 || i == 44)) {
+            put_pixel(pio, sm, urgb_from_hsv(30, 75, brightness));
+            continue;
+        } else if (sakura[i].saturation > 99) {
+            sakura[i].direction = -0.1;
+        } else if (sakura[i].saturation < 85) {
+            sakura[i].direction = 0.1;
         }
         sakura[i].saturation += sakura[i].direction;
         put_pixel(pio, sm, urgb_from_hsv(sakura[i].hue, sakura[i].saturation, brightness));
     }
 }
 
-typedef void (*pattern)(PIO pio, uint sm, uint len, float brightness);
+int sparkle[NUM_PIXELS];
+
+void update_sparkles(){
+    for (uint i = 0; i < NUM_PIXELS; ++i){
+        sparkle[i] = rand() % 16 ? 0 : 1;
+    }
+}
+
+void pattern_sparkle(PIO pio, uint sm, uint len, float brightness, uint frame) {
+    if (frame % 15 == 0){
+       update_sparkles(); 
+    }
+    for (uint i = 0; i < len; ++i)
+        if (sparkle[i])
+            put_pixel(pio, sm, urgb_from_hsv(343, 87, brightness)); 
+        else put_pixel(pio, sm, 0);
+}
+
+typedef void (*pattern)(PIO pio, uint sm, uint len, float brightness, uint frame);
 const struct {
     pattern pat;
     const char *name;
 } pattern_table[] = {
+        {pattern_sparkle, "Sparkles"},
         {pattern_sakura, "Sakura"}
 };
 
@@ -100,35 +128,32 @@ int main() {
     stdio_init_all();
     printf("What are you doing here, did something break?\n");
 
-    // todo get free sm
     PIO pio;
     uint sm;
     uint offset;
 
-    // This will find a free pio and state machine for our program and load it for us
-    // We use pio_claim_free_sm_and_add_program_for_gpio_range (for_gpio_range variant)
-    // so we will get a PIO instance suitable for addressing gpios >= 32 if needed and supported by the hardware
     bool success = pio_claim_free_sm_and_add_program_for_gpio_range(&ws2812_program, &pio, &sm, &offset, WS2812_PIN, 1, true);
     hard_assert(success);
 
     adc_init();
     adc_gpio_init(POT_PIN);
     adc_select_input(0);
-    const float scaling_factor = 100.0f / (1 << 12);
+    const float scaling_factor = 80.0f / (1 << 12);
 
     ws2812_program_init(pio, sm, offset, WS2812_PIN, 800000);
 
     init_sakura();
+    uint frame = 0;
     while (1) {
         int pat = rand() % count_of(pattern_table);
         puts(pattern_table[pat].name);
         for (int i = 0; i < 1000; ++i) {
-            float brightness = adc_read() * scaling_factor;
-            pattern_table[pat].pat(pio, sm, NUM_PIXELS, brightness);
+            float brightness = adc_read() * scaling_factor + 5;
+            pattern_table[pat].pat(pio, sm, NUM_PIXELS, brightness, frame);
             sleep_ms(3);
+            frame += 1;
         }
     }
 
-    // This will free resources and unload our program
     pio_remove_program_and_unclaim_sm(&ws2812_program, pio, sm, offset);
 }
