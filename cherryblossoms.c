@@ -15,6 +15,7 @@
 #define WS2812_PIN 2
 #define POT_PIN 26
 #define MODE_SELECTOR 27
+#define COLOUR_SELECTOR 19
 
 // Check the pin is compatible with the platform
 #if WS2812_PIN >= NUM_BANK0_GPIOS
@@ -57,43 +58,41 @@ uint32_t urgb_from_hsv(float H, float S, float V) {
     return urgb_u32(r*255, g*255, b*255); 
 }
 
-typedef struct sakura_pixel_value{
+typedef struct pixel_value{
     float hue;
     float saturation;
     float direction;
-} sakura_pixel_value;
+} pixel_value;
 
-sakura_pixel_value sakura[NUM_PIXELS];
-
-void init_sakura(){
+void init_pixels(int hue, pixel_value* pixel_array){
     for (int i=0; i < NUM_PIXELS; ++i){
-        if (i == 27 || i == 28 || i == 35 || i == 36) sakura[i].hue = 25;
+        if (i == 27 || i == 28 || i == 35 || i == 36) pixel_array[i].hue = 25;
         else if ( i == 19 || i == 20 || i == 26 ||i == 29 || i== 34 || i == 37 || i == 43 || i == 44){
             // the outer ring of the inner circle part (pardon my botany) does not change
             continue;
         } else {
-            sakura[i].hue = 343;
+            pixel_array[i].hue = hue;
         }
         // setting the default saturation above the turning point creates a breathing effect 
         // increasing the difference between the cutoff point and the default value lengthens the breathing duration
-        sakura[i].saturation = ((double) rand() / (double) RAND_MAX) * 10.0 + 89.0;  
-        sakura[i].direction = (rand() >> 30) & 1 ? 0.1: -0.1;
+        pixel_array[i].saturation = ((double) rand() / (double) RAND_MAX) * 10.0 + 89.0;  
+        pixel_array[i].direction = (rand() >> 30) & 1 ? 0.1: -0.1;
     }
 }
 
-void pattern_sakura(PIO pio, uint sm, uint len, float brightness, uint frame){
+void pattern_sakura(PIO pio, uint sm, uint len, float brightness, pixel_value* pixel_array){
     for (uint i = 0; i < len; ++i){
         // sometimes things look ugly but who cares honestly
         if ((i == 19 || i == 20 || i == 26 ||i == 29 || i== 34 || i == 37 || i == 43 || i == 44)) {
             put_pixel(pio, sm, urgb_from_hsv(30, 75, brightness));
             continue;
-        } else if (sakura[i].saturation > 99) {
-            sakura[i].direction = -0.1;
-        } else if (sakura[i].saturation < 85) {
-            sakura[i].direction = 0.1;
+        } else if (pixel_array[i].saturation > 99) {
+            pixel_array[i].direction = -0.1;
+        } else if (pixel_array[i].saturation < 85) {
+            pixel_array[i].direction = 0.1;
         }
-        sakura[i].saturation += sakura[i].direction;
-        put_pixel(pio, sm, urgb_from_hsv(sakura[i].hue, sakura[i].saturation, brightness));
+        pixel_array[i].saturation += pixel_array[i].direction;
+        put_pixel(pio, sm, urgb_from_hsv(pixel_array[i].hue, pixel_array[i].saturation, brightness));
     }
 }
 
@@ -105,24 +104,15 @@ void update_sparkles(){
     }
 }
 
-void pattern_sparkle(PIO pio, uint sm, uint len, float brightness, uint frame) {
+void pattern_sparkle(PIO pio, uint sm, uint len, float brightness, uint frame, int hue) {
     if (frame % 15 == 0){
        update_sparkles(); 
     }
     for (uint i = 0; i < len; ++i)
         if (sparkle[i])
-            put_pixel(pio, sm, urgb_from_hsv(343, 87, brightness)); 
+            put_pixel(pio, sm, urgb_from_hsv(hue, 87, brightness)); 
         else put_pixel(pio, sm, 0);
 }
-
-typedef void (*pattern)(PIO pio, uint sm, uint len, float brightness, uint frame);
-const struct {
-    pattern pat;
-    const char *name;
-} pattern_table[] = {
-        {pattern_sparkle, "Sparkles"},
-        {pattern_sakura, "Sakura"}
-};
 
 const float scaling_factor = 80.0f / (1 << 10);
 
@@ -133,6 +123,7 @@ float clean_brightness(){
     int value = adc_read();
     value = value >> 2;
     float clean_value = (alpha) * previous + (1-alpha) * (float) value;
+    printf("%f\n", clean_value);
     previous = clean_value;
     return clean_value * scaling_factor + 5;
 }
@@ -158,13 +149,29 @@ int main() {
     gpio_init(MODE_SELECTOR);
     gpio_set_dir(MODE_SELECTOR, GPIO_IN);
     gpio_pull_up(MODE_SELECTOR);
+    
+    gpio_init(COLOUR_SELECTOR);
+    gpio_set_dir(COLOUR_SELECTOR, GPIO_IN);
+    gpio_pull_up(COLOUR_SELECTOR);
 
-    init_sakura();
+
+    pixel_value sakura[NUM_PIXELS];
+    pixel_value light[NUM_PIXELS];
+
+    init_pixels(343, sakura);
+    init_pixels(30, light);
+
+
     uint frame = 0;
     while (1) {
         int pat = gpio_get(MODE_SELECTOR) ? 0 : 1;
+        int col = gpio_get(COLOUR_SELECTOR) ? 0 : 1;
         float brightness = clean_brightness() ;
-        pattern_table[pat].pat(pio, sm, NUM_PIXELS, brightness, frame);
+        if (pat) {
+            pixel_value* pixel_set = col ? sakura : light; 
+            pattern_sakura(pio, sm, NUM_PIXELS, brightness, pixel_set);
+        }
+        else pattern_sparkle(pio, sm, NUM_PIXELS, brightness, frame, col ? 343 : 30);
         sleep_ms(3);
         frame += 1;
     }
