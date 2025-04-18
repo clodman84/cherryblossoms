@@ -14,6 +14,7 @@
 #define NUM_PIXELS 64
 #define WS2812_PIN 2
 #define POT_PIN 26
+#define MODE_SELECTOR 27
 
 // Check the pin is compatible with the platform
 #if WS2812_PIN >= NUM_BANK0_GPIOS
@@ -123,6 +124,19 @@ const struct {
         {pattern_sakura, "Sakura"}
 };
 
+const float scaling_factor = 80.0f / (1 << 10);
+
+float previous = 0;
+float alpha = 0.99;
+
+float clean_brightness(){
+    int value = adc_read();
+    value = value >> 2;
+    float clean_value = (alpha) * previous + (1-alpha) * (float) value;
+    previous = clean_value;
+    return clean_value * scaling_factor + 5;
+}
+
 int main() {
     //set_sys_clock_48();
     stdio_init_all();
@@ -138,21 +152,21 @@ int main() {
     adc_init();
     adc_gpio_init(POT_PIN);
     adc_select_input(0);
-    const float scaling_factor = 80.0f / (1 << 12);
 
     ws2812_program_init(pio, sm, offset, WS2812_PIN, 800000);
+
+    gpio_init(MODE_SELECTOR);
+    gpio_set_dir(MODE_SELECTOR, GPIO_IN);
+    gpio_pull_up(MODE_SELECTOR);
 
     init_sakura();
     uint frame = 0;
     while (1) {
-        int pat = rand() % count_of(pattern_table);
-        puts(pattern_table[pat].name);
-        for (int i = 0; i < 1000; ++i) {
-            float brightness = adc_read() * scaling_factor + 5;
-            pattern_table[pat].pat(pio, sm, NUM_PIXELS, brightness, frame);
-            sleep_ms(3);
-            frame += 1;
-        }
+        int pat = gpio_get(MODE_SELECTOR) ? 0 : 1;
+        float brightness = clean_brightness() ;
+        pattern_table[pat].pat(pio, sm, NUM_PIXELS, brightness, frame);
+        sleep_ms(3);
+        frame += 1;
     }
 
     pio_remove_program_and_unclaim_sm(&ws2812_program, pio, sm, offset);
