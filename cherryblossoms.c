@@ -121,15 +121,13 @@ float alpha = 0.99;
 
 float clean_brightness(){
     int value = adc_read();
-    value = value >> 2;
+    value = (1 << 10) - (value >> 2);  // my dumbass connected the potentiometer in reverse
     float clean_value = (alpha) * previous + (1-alpha) * (float) value;
-    printf("%f\n", clean_value);
     previous = clean_value;
     return clean_value * scaling_factor + 5;
 }
 
 int main() {
-    //set_sys_clock_48();
     stdio_init_all();
     printf("What are you doing here, did something break?\n");
 
